@@ -1,0 +1,335 @@
+---
+title: "Final_Project_A1093355彭郁庭"
+author: "彭郁庭"
+date: "2023-06-08"
+output: html_document
+encoding: UTF-8
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(dplyr)
+library(showtext)
+library(lubridate)
+library(ggplot2)
+library(cowplot)
+library(FSA)
+library(lattice)
+library(car)
+library(rstatix)
+library(tidyr)
+library(caret)
+library(arules)
+library(arulesViz)
+
+DocPath <- "C:/Users/user/Desktop/資料分析/期末報告資料集/"
+Doclist <- dir(path = DocPath)
+trade_initlist <- data.frame()
+
+for (doc in Doclist) {
+  tempDocPath <- paste0(DocPath, doc, "/")
+  Jlist_filename <- "J_lvr_land_A.csv"
+  Olist_filename <- "O_lvr_land_A.csv"
+  tryCatch({
+    Jlist_filename <- paste0(tempDocPath, Jlist_filename)
+    Olist_filename <- paste0(tempDocPath, Olist_filename)
+    temp_Jfile <- read.csv(Jlist_filename, fileEncoding = 'UTF-8')
+    temp_Ofile <- read.csv(Olist_filename, fileEncoding = 'UTF-8')
+    trade_initlist <- bind_rows(trade_initlist, temp_Jfile)
+    trade_initlist <- bind_rows(trade_initlist, temp_Ofile)
+  }, error = function(e) {
+    cat("Error occurred while reading", "\n")
+    return()
+  })
+}
+font_add_google("Noto Sans TC", "NotoSansTC")
+font_families()
+showtext_auto(enable=TRUE)
+par(family = 'NotoSansTC')
+head(trade_initlist)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+<font size=6>**研究動機**</font>\
+
+<font size=4>**目的**:</font>\
+1.想了解新竹縣市近五年整體房價走勢\
+2.統計分析房價和其他自變數的關係幫助制定決策
+
+<font size=4>**資料表介紹** </font>\ 
+內政部不動產成交案件實際資訊資料 (2018-2022)\
+來源: 內政部\
+介紹: 收集了民國101年至民國112年期間，包含不動產買賣、預售屋買賣、不動產租賃三種交易類別的房價實價登陸資料。每三個月為一季，\
+一年共四季，可以匯出成XML、TXT、CSV或XLS格式檔案。利用進階下載可以選擇欲下載之縣市與交易類別。
+本次研究蒐集了2018年至2022年新竹縣市的不動產買賣資料，共33個欄位，108503筆資料。\
+
+**本次報告將使用之欄位如下**:
+
+* 鄉鎮市區
+* 建物型態
+* 主要用途
+* 備註
+* 交易年月日
+* 建築完成年月
+* 單價元平方公尺
+
+**本次報告額外新增的欄位如下**:
+
+* age: 建築完成年月 - 交易年月日
+* year: 交易年月日轉為西元年
+* price per ping: 單價元平方公尺 * 3.30579(單位轉換)
+
+來源網址:<https://plvr.land.moi.gov.tw/DownloadOpenData>
+
+**欄位簡介**
+
+| 欄位名稱        | 型態      | 簡介                         |
+|-----------------|-----------|------------------------------|
+| 鄉鎮市區        |   string  | 新竹縣市鄉鎮市區名稱(共13區) |
+| 建物型態        |   string  | 建物型態(共11種)              |
+| 主要用途        |   string  | 房屋的主要用途               |
+| 備註            |   string  | 買賣備註                     |
+| 交易年月日      |   string  | 交易年月日(民國)             |
+| 建築完成年月    |   string  | 建築完成年月日(民國)         |
+| 單價元平方公尺  |   double  | 每平方公尺的價錢(元)         |
+| age             |    int    | 從建築完成到交易完成時的屋齡 |
+| year            |   string  | 交易西元年                   |
+| price_per_ping  |   double  | 每坪的價錢(元)               |
+
+<font size=6>**分析過程**</font>\
+<font size=4>**處理原始資料**:</font>\
+1. 新增屋齡、year、單價元坪欄位\
+2. 留下交易年份為2018~2022的資料存入新的變數中\
+3. 刪除單純車位買賣的交易紀錄\
+4. 刪除有備註的交易紀錄(通常為不正常之交易)\
+5. 只留下主要用途為住家用的交易紀錄\
+6. 刪除單價元坪、屋齡欄位為空值的交易紀錄\
+```{r}
+trade_initlist <- trade_initlist %>%
+  mutate(age = as.integer(substring(交易年月日, 1, nchar(交易年月日) - 4)) - as.integer(substring(建築完成年月, 1, nchar(建築完成年月) - 4)))
+
+trade_initlist <- trade_initlist %>%
+  mutate(year = as.integer(substr(交易年月日, 1, nchar(交易年月日) - 4)) + 1911)
+
+trade_initlist$單價元平方公尺 <- as.numeric(trade_initlist$單價元平方公尺)
+trade_initlist$price_per_ping <- trade_initlist$單價元平方公尺 * 3.30579
+
+trade_filtered <- trade_initlist %>%
+  filter(year >= 2018 & year <= 2022)
+
+trade_list <- trade_filtered %>%
+  filter(交易標的 != "車位" & 主要用途 == "住家用" & grepl("^\\s*$", 備註) & !is.na(price_per_ping) & price_per_ping != 0 & !is.na(age))
+
+trade_list <- trade_list %>%
+  rename(district = 鄉鎮市區, sidearea = 附屬建物面積, type = 建物型態)
+```
+
+<font size=4>**敘述統計**:</font>\
+# 各地區資料分佈數量直方圖
+```{r}
+district_counts <- table(trade_list$district)
+
+district_counts_df <- data.frame(district = names(district_counts),
+                                 count = as.numeric(district_counts))
+
+district_counts_gg<- ggplot(data = district_counts_df, aes(x = district, y = count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  xlab("地區") +
+  ylab("資料筆數") +
+  ggtitle("各地區資料筆數直方圖")
+district_counts_gg
+```
+
+# 各地區資料房價分佈盒狀圖
+```{r}
+district_sum <- Summarize(price_per_ping ~ district, data = trade_list)
+age_sum <- Summarize(price_per_ping ~ age, data = trade_list)
+type_sum <- Summarize(price_per_ping ~ type, data = trade_list)
+boxplot(price_per_ping ~ district,
+        data = trade_list,
+        ylab="房價",
+        xlab="地區",
+        ylim = c(0, 1351139.2))
+mean_value <- mean(trade_list$price_per_ping)
+abline(h = mean_value, col = "red", lty = 2)
+```
+
+# 各地區對應單價元坪的直方圖
+```{r}
+district_colors <- c("red","green","blue","#FF359A","yellow","orange","chocolate","#FFAD86","purple","brown","darkgreen","darkblue","#00AEAE")
+theme_set(theme(text = element_text(size = 20)))
+
+histogram <- ggplot(data = trade_list, aes(x = price_per_ping, fill = district)) +
+  geom_histogram(data = subset(trade_list, price_per_ping < 900000), bins = 120, alpha = 0.7) +
+  xlim(0, 900000) +
+  labs(fill = "district") +
+  scale_fill_manual(values = district_colors) +
+  xlab("單價元坪") +
+  ylab("頻率") +
+  ggtitle("不同地區對應單價元坪的直方圖")
+
+mean_value <- mean(trade_list$price_per_ping)
+sd_value <- sd(trade_list$price_per_ping)
+
+# 繪製常態分佈曲線
+density_curve <- ggplot(data = trade_list, aes(x = price_per_ping)) +
+  stat_function(fun = dnorm, args = list(mean = mean_value, sd = sd_value), color = "red", linetype = "dashed") +
+  xlim(0, 900000) +
+  xlab("單價元坪") +
+  ylab("密度") +
+  ggtitle("單價元坪的常態分布曲線")
+
+combined_plot <- cowplot::plot_grid(histogram, density_curve, nrow = 2, align = "v")
+combined_plot
+```
+
+# 近五年各地區房價趨勢折線圖
+```{r}
+districts <- unique(trade_list$`district`)
+prices <- list()
+for (district in districts) {
+    cond <- (
+        trade_list$`district` == district &
+        trade_list$`price_per_ping` < quantile(trade_list$price_per_ping, 0.95) &
+        trade_list$`price_per_ping` > quantile(trade_list$price_per_ping, 0.05)
+        )
+        groups <- trade_list$year[cond]
+                          
+        prices[[district]] <- trade_list[cond, 'price_per_ping'] %>%
+                            as.numeric() %>%
+                            tibble(year = groups, price = .) %>%
+                            group_by(year) %>%
+                            summarise(mean_price = mean(price)) %>%
+                            filter(year >= 2018) %>%
+                            mutate(district = district)
+}
+
+price_history <- do.call(rbind, prices)
+price_history <- price_history[order(price_history$year), ]
+
+ggplot(price_history, aes(x = year, y = mean_price, color = district)) +
+  geom_line() +
+  labs(x = "Year", y = "Average Price", title = "Price History") +
+  scale_color_manual(values = district_colors, name = "District")
+```
+
+# 新竹縣市總體房價趨勢圖
+```{r}
+price_history_mean <- aggregate(mean_price ~ year, data = price_history, FUN = mean)
+ggplot(price_history_mean, aes(x = year, y = mean_price)) +
+  geom_line() +
+  labs(x = "Year", y = "Mean Price", title = "Mean Price History")
+```
+
+# "單價元坪", "屋齡", "附屬建物面積"變數QQ圖
+```{r}
+par(mfrow = c(2, 2))
+qq_plots <- lapply(c("price_per_ping", "age", "sidearea"), function(variable) {
+  plot(qqnorm(scale(trade_list[[variable]]), plot.it = FALSE), xlab = "Theoretical Quantiles", ylab = "Standardized Values")
+  qqline(scale(trade_list[[variable]]), col = "red")
+  title(main = paste(variable, "QQ 圖"))
+})
+```
+
+<font size=4>**統計分析房價和其他自變數的關係**:</font>\
+分析流程:\
+1.將變數轉換為虛擬變數\
+2.Create transactions\
+3.Analyze the transactions\
+# Association Rules
+```{r}
+trade_data <- data.frame()
+trade_data <- trade_list %>%
+  mutate(age = case_when(
+    age < 10 ~ "0-9",
+    age >= 10 & age < 20 ~ "10-19",
+    age >= 20 & age < 30 ~ "20-29",
+    TRUE ~ "30+"
+  ))
+trade_data <- trade_data %>%
+  mutate(price = case_when(
+    price_per_ping < 150000 ~ "低價位",
+    price_per_ping > 150000 & price_per_ping < 230000 ~ "中價位",
+    TRUE ~ "高價位"
+  ))
+
+trade_data <- trade_data[, c("district", "age","type", "price")]
+district_filtered <- trade_data %>%
+  filter(district == "竹北市" | district == "新竹市" | district == "新豐鄉"| district == "湖口鄉"| district == "竹東鎮")
+
+research_list <- district_filtered %>%
+  filter(type == "住宅大樓(11層含以上有電梯)" | type == "華廈(10層含以下有電梯)" | type == "透天厝")
+
+district_dummy <- model.matrix(~ district - 1, data = research_list)
+age_dummy <- model.matrix(~ age - 1, data = research_list)
+building_dummy <- model.matrix(~ type - 1, data = research_list)
+price_dummy <- model.matrix(~ price - 1, data = research_list)
+data_dummy <- cbind(district_dummy, age_dummy, building_dummy, price_dummy)
+
+trade_transactions <- transactions(data_dummy)
+
+rules <- apriori(trade_transactions,
+                 parameter = list(support = 0.005,
+                                  confidence = 0.5,
+                                  maxlen = 15,
+                                  minlen =2,
+                                  target = "rules")
+)
+
+summary(rules)
+plot(head(sort(rules,
+               by = "lift"),
+          n = 10),
+     method = "graph",
+     engine = "htmlwidget")
+```
+
+# 查看高價位房價規則
+```{r}
+high_price_rules <- apriori(trade_transactions,
+                 parameter = list(support = 0.005,
+                                  confidence = 0.5,
+                                  maxlen = 15,
+                                  minlen =2),
+                 appearance = list(rhs="price高價位")
+)
+
+inspect(high_price_rules[1:5])
+plot(head(sort(high_price_rules,
+               by = "lift"),
+          n = 10),
+     method = "graph",
+     engine = "htmlwidget")
+```
+
+
+<font size=5>**結論**</font>
+
+-   **新竹縣市各地區近五年房價趨勢：**\
+1. 高價位地段(竹北市、新竹市、新埔鎮)仍持續上漲\
+2. 僅芎林和北埔地區下降的較明顯，峨嵋鄉有些微下跌\
+3. 橫山房價起伏異常大，需留意\
+
+-   **新竹縣市總體房價趨勢：**\
+1. 逐年快速增長直到2021年初\
+2. 2021年達到平均房價高峰\
+
+-   **低房價的條件(適合買入)：**\
+鄉鎮地區: 新豐鄉、竹東鎮、湖口鄉\
+建物型態: 住宅大樓(11層含以上有電梯)、華夏(10層含以下有電梯)\
+屋齡: 20-29、10-19\
+
+-   **高房價的條件(適合賣出)：**\
+鄉鎮地區: 新竹市、竹北市\
+建物型態: 住宅大樓(11層含以上有電梯)、華夏(10層含以下有電梯)、透天厝\
+屋齡: 30+\
+
+<font size=5>**我的想法**</font>\
+1. 新竹縣市的總體房價有下降的趨勢，如有買賣之需求皆建議再觀望一段時間。\
+2. 建物型態為住宅大樓(11層含以上有電梯)、華夏(10層含以下有電梯)的物件為目前買賣趨勢。也許對於以小家庭組成為主的現代家庭來說，\
+在預算有限的情況下，物業管理與保全相關因素之考量較坪數大小重要。\
+3. 市區地段的交通便利程度、教育資源、工作機會等為影響房價的潛在因素，需要進一步的分析與確認。\
+4. 只要地段佳，就算是屋齡超過30年的物件，也能夠高價賣出;在郊區地段則可以較便宜的價格購入屋齡年輕的房子。\
+5. 決定屋價高低的變數排序: 地段 >> 建物型態 > 屋齡\
+\
+\
